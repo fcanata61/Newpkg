@@ -16,8 +16,15 @@ install_pkg() {
         exit 1
     fi
 
-    echo "📦 Instalando $pkg..."
     source "$recipe"
+
+    # Instala dependências primeiro
+    for dep in ${DEPENDS[@]}; do
+        if [ ! -f "$DB_DIR/$dep.ver" ]; then
+            echo "➡️ Instalando dependência: $dep"
+            $0 install "$dep"
+        fi
+    done
 
     # Verifica se já está instalado
     if [ -f "$DB_DIR/$pkg.ver" ]; then
@@ -25,13 +32,14 @@ install_pkg() {
         return
     fi
 
+    echo "📦 Instalando $pkg..."
+
     # Baixa e compila
     cd "$SRC_DIR"
     wget -q "$SRC_URL" -O "$pkg.tar.gz"
     tar xf "$pkg.tar.gz"
     cd "$SRC_DIR/$SRC_DIRNAME"
 
-    # Compila com prefixo /usr mas "instala" num diretório temporário
     make clean >/dev/null 2>&1
     ./configure --prefix=/usr
     make -j$(nproc)
@@ -41,29 +49,41 @@ install_pkg() {
     # Copia arquivos para o sistema
     cp -av "$BUILD_DIR/$pkg"/* /
 
-    # Registra arquivos instalados
+    # Registra arquivos e dependências
     find "$BUILD_DIR/$pkg" -type f | sed "s|$BUILD_DIR/$pkg||" > "$DB_DIR/$pkg.files"
     echo "$VERSION" > "$DB_DIR/$pkg.ver"
+    echo "${DEPENDS[@]}" > "$DB_DIR/$pkg.deps"
 
     echo "✅ $pkg $VERSION instalado com sucesso!"
 }
 
 remove_pkg() {
     pkg=$1
-    if [ ! -f "$DB_DIR/$pkg.files" ]; then
+
+    if [ ! -f "$DB_DIR/$pkg.ver" ]; then
         echo "❌ $pkg não está instalado."
         exit 1
     fi
 
+    # Verifica se outro pacote depende dele
+    for depfile in "$DB_DIR"/*.deps; do
+        [ -e "$depfile" ] || continue
+        depender=$(basename "$depfile" .deps)
+        if grep -qw "$pkg" "$depfile"; then
+            echo "❌ Não posso remover $pkg: $depender depende dele."
+            exit 1
+        fi
+    done
+
     echo "📦 Removendo $pkg..."
 
-    # Deleta cada arquivo listado
+    # Apaga arquivos
     while read -r file; do
         rm -f "/$file"
     done < "$DB_DIR/$pkg.files"
 
     # Remove registros
-    rm -f "$DB_DIR/$pkg.files" "$DB_DIR/$pkg.ver"
+    rm -f "$DB_DIR/$pkg.files" "$DB_DIR/$pkg.ver" "$DB_DIR/$pkg.deps"
 
     echo "✅ $pkg removido com sucesso!"
 }
@@ -78,9 +98,21 @@ list_pkgs() {
     done
 }
 
+info_pkg() {
+    pkg=$1
+    if [ ! -f "$DB_DIR/$pkg.ver" ]; then
+        echo "❌ $pkg não está instalado."
+        exit 1
+    fi
+    echo "📦 Pacote: $pkg"
+    echo "   Versão: $(cat $DB_DIR/$pkg.ver)"
+    echo "   Depende de: $(cat $DB_DIR/$pkg.deps 2>/dev/null)"
+}
+
 case "$1" in
     install) install_pkg "$2" ;;
     remove)  remove_pkg "$2" ;;
     list)    list_pkgs ;;
-    *) echo "Uso: $0 {install|remove|list} pacote" ;;
+    info)    info_pkg "$2" ;;
+    *) echo "Uso: $0 {install|remove|list|info} pacote" ;;
 esac
