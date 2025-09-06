@@ -4,21 +4,29 @@ PKG_DIR="/usr/local/my-pkgmgr/pkgs"
 DB_DIR="/usr/local/my-pkgmgr/db"
 BUILD_DIR="/usr/local/my-pkgmgr/build"
 SRC_DIR="/usr/local/src"
+REPO_URL="https://raw.githubusercontent.com/seuuser/mypkg-repo/main"
 
-mkdir -p "$DB_DIR" "$BUILD_DIR"
+mkdir -p "$DB_DIR" "$BUILD_DIR" "$PKG_DIR"
 
-install_pkg() {
+fetch_recipe() {
     pkg=$1
     recipe="$PKG_DIR/$pkg.sh"
 
     if [ ! -f "$recipe" ]; then
-        echo "❌ Receita $pkg não encontrada!"
-        exit 1
+        echo "🌐 Baixando receita $pkg do repositório..."
+        curl -s -L "$REPO_URL/$pkg.sh" -o "$recipe" || {
+            echo "❌ Não encontrei $pkg no repositório."
+            exit 1
+        }
     fi
+}
 
-    source "$recipe"
+install_pkg() {
+    pkg=$1
+    fetch_recipe "$pkg"
+    source "$PKG_DIR/$pkg.sh"
 
-    # Instala dependências primeiro
+    # Instala dependências
     for dep in ${DEPENDS[@]}; do
         if [ ! -f "$DB_DIR/$dep.ver" ]; then
             echo "➡️ Instalando dependência: $dep"
@@ -56,10 +64,8 @@ build_and_install() {
 
     DESTDIR="$BUILD_DIR/$pkg" make install
 
-    # Copia arquivos para o sistema
     cp -av "$BUILD_DIR/$pkg"/* /
 
-    # Registra arquivos e dependências
     find "$BUILD_DIR/$pkg" -type f | sed "s|$BUILD_DIR/$pkg||" > "$DB_DIR/$pkg.files"
     echo "$ver" > "$DB_DIR/$pkg.ver"
     echo "${deps[@]}" > "$DB_DIR/$pkg.deps"
@@ -69,13 +75,11 @@ build_and_install() {
 
 remove_pkg() {
     pkg=$1
-
     if [ ! -f "$DB_DIR/$pkg.ver" ]; then
         echo "❌ $pkg não está instalado."
         exit 1
     fi
 
-    # Verifica se outro pacote depende dele
     for depfile in "$DB_DIR"/*.deps; do
         [ -e "$depfile" ] || continue
         depender=$(basename "$depfile" .deps)
@@ -86,13 +90,10 @@ remove_pkg() {
     done
 
     echo "📦 Removendo $pkg..."
-
-    # Apaga arquivos
     while read -r file; do
         rm -f "/$file"
     done < "$DB_DIR/$pkg.files"
 
-    # Remove registros
     rm -f "$DB_DIR/$pkg.files" "$DB_DIR/$pkg.ver" "$DB_DIR/$pkg.deps"
 
     echo "✅ $pkg removido com sucesso!"
@@ -100,21 +101,15 @@ remove_pkg() {
 
 upgrade_pkg() {
     pkg=$1
-    recipe="$PKG_DIR/$pkg.sh"
-
-    if [ ! -f "$recipe" ]; then
-        echo "❌ Receita $pkg não encontrada!"
-        exit 1
-    fi
+    fetch_recipe "$pkg"
+    source "$PKG_DIR/$pkg.sh"
 
     if [ ! -f "$DB_DIR/$pkg.ver" ]; then
         echo "⚠️ $pkg não está instalado. Use 'install'."
         exit 1
     fi
 
-    source "$recipe"
     current=$(cat "$DB_DIR/$pkg.ver")
-
     if [ "$VERSION" = "$current" ]; then
         echo "✅ $pkg já está na versão $VERSION"
         return
@@ -122,7 +117,6 @@ upgrade_pkg() {
 
     echo "⬆️ Atualizando $pkg de $current para $VERSION..."
 
-    # Remove registros antigos mas mantém dependências
     rm -f "$DB_DIR/$pkg.files" "$DB_DIR/$pkg.ver"
 
     build_and_install "$pkg" "$SRC_URL" "$SRC_DIRNAME" "$VERSION" "${DEPENDS[@]}"
