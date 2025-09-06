@@ -3,10 +3,11 @@
 PKG_DIR="/usr/local/my-pkgmgr/pkgs"
 DB_DIR="/usr/local/my-pkgmgr/db"
 BUILD_DIR="/usr/local/my-pkgmgr/build"
-SRC_DIR="/usr/local/src"
+SRC_DIR="/usr/local/my-pkgmgr/src"
+BINPKG_DIR="/usr/local/my-pkgmgr/binpkgs"
 REPO_URL="https://raw.githubusercontent.com/seuuser/mypkg-repo/main"
 
-mkdir -p "$DB_DIR" "$BUILD_DIR" "$PKG_DIR"
+mkdir -p "$DB_DIR" "$BUILD_DIR" "$PKG_DIR" "$SRC_DIR" "$BINPKG_DIR"
 
 fetch_recipe() {
     pkg=$1
@@ -38,60 +39,55 @@ check_integrity() {
     echo "✅ Integridade verificada"
 }
 
-install_pkg() {
+build_pkg() {
     pkg=$1
     fetch_recipe "$pkg"
     source "$PKG_DIR/$pkg.sh"
 
-    # Instala dependências
-    for dep in ${DEPENDS[@]}; do
-        if [ ! -f "$DB_DIR/$dep.ver" ]; then
-            echo "➡️ Instalando dependência: $dep"
-            $0 install "$dep"
-        fi
-    done
-
-    if [ -f "$DB_DIR/$pkg.ver" ]; then
-        echo "⚠️  $pkg já está instalado (versão $(cat $DB_DIR/$pkg.ver))."
-        return
-    fi
-
-    build_and_install "$pkg" "$SRC_URL" "$SRC_DIRNAME" "$VERSION" "$SHA256" "${DEPENDS[@]}"
-}
-
-build_and_install() {
-    pkg=$1
-    url=$2
-    srcdir=$3
-    ver=$4
-    hash=$5
-    shift 5
-    deps=("$@")
-
-    echo "📦 Compilando e instalando $pkg $ver..."
+    echo "📦 Compilando $pkg $VERSION..."
 
     cd "$SRC_DIR"
-    wget -q "$url" -O "$pkg.tar.gz"
+    wget -q "$SRC_URL" -O "$pkg.tar.gz"
 
-    # Checa integridade
-    check_integrity "$pkg.tar.gz" "$hash"
+    check_integrity "$pkg.tar.gz" "$SHA256"
 
     tar xf "$pkg.tar.gz"
-    cd "$SRC_DIR/$srcdir"
+    cd "$SRC_DIR/$SRC_DIRNAME"
 
     make clean >/dev/null 2>&1
     ./configure --prefix=/usr
     make -j$(nproc)
 
-    DESTDIR="$BUILD_DIR/$pkg" make install
+    DESTDIR="$BUILD_DIR/$pkg" fakeroot make install
 
-    cp -av "$BUILD_DIR/$pkg"/* /
+    pkgfile="$BINPKG_DIR/${pkg}-${VERSION}.pkg.tar.xz"
+    tar -C "$BUILD_DIR/$pkg" -cJf "$pkgfile" .
 
-    find "$BUILD_DIR/$pkg" -type f | sed "s|$BUILD_DIR/$pkg||" > "$DB_DIR/$pkg.files"
-    echo "$ver" > "$DB_DIR/$pkg.ver"
-    echo "${deps[@]}" > "$DB_DIR/$pkg.deps"
+    echo "✅ Pacote binário gerado: $pkgfile"
+}
 
-    echo "✅ $pkg $ver instalado com sucesso!"
+install_pkg() {
+    pkg=$1
+    fetch_recipe "$pkg"
+    source "$PKG_DIR/$pkg.sh"
+
+    # Se existir pacote binário, instala direto
+    pkgfile="$BINPKG_DIR/${pkg}-${VERSION}.pkg.tar.xz"
+    if [ -f "$pkgfile" ]; then
+        echo "📦 Instalando $pkg $VERSION a partir de binário..."
+        fakeroot tar -C / -xJf "$pkgfile"
+
+        tar -tJf "$pkgfile" > "$DB_DIR/$pkg.files"
+        echo "$VERSION" > "$DB_DIR/$pkg.ver"
+        echo "${DEPENDS[@]}" > "$DB_DIR/$pkg.deps"
+
+        echo "✅ $pkg $VERSION instalado com sucesso!"
+        return
+    fi
+
+    # Senão, compila do zero
+    build_pkg "$pkg"
+    install_pkg "$pkg"
 }
 
 remove_pkg() {
@@ -139,7 +135,8 @@ upgrade_pkg() {
     echo "⬆️ Atualizando $pkg de $current para $VERSION..."
     rm -f "$DB_DIR/$pkg.files" "$DB_DIR/$pkg.ver"
 
-    build_and_install "$pkg" "$SRC_URL" "$SRC_DIRNAME" "$VERSION" "$SHA256" "${DEPENDS[@]}"
+    build_pkg "$pkg"
+    install_pkg "$pkg"
 }
 
 list_pkgs() {
@@ -164,10 +161,11 @@ info_pkg() {
 }
 
 case "$1" in
+    build)   build_pkg "$2" ;;
     install) install_pkg "$2" ;;
     remove)  remove_pkg "$2" ;;
     upgrade) upgrade_pkg "$2" ;;
     list)    list_pkgs ;;
     info)    info_pkg "$2" ;;
-    *) echo "Uso: $0 {install|remove|upgrade|list|info} pacote" ;;
+    *) echo "Uso: $0 {build|install|remove|upgrade|list|info} pacote" ;;
 esac
