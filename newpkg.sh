@@ -21,6 +21,23 @@ fetch_recipe() {
     fi
 }
 
+check_integrity() {
+    file=$1
+    expected=$2
+
+    echo "🔑 Verificando integridade..."
+    actual=$(sha256sum "$file" | awk '{print $1}')
+
+    if [ "$actual" != "$expected" ]; then
+        echo "❌ Falha de integridade!"
+        echo "   Esperado: $expected"
+        echo "   Obtido : $actual"
+        exit 1
+    fi
+
+    echo "✅ Integridade verificada"
+}
+
 install_pkg() {
     pkg=$1
     fetch_recipe "$pkg"
@@ -34,13 +51,12 @@ install_pkg() {
         fi
     done
 
-    # Verifica se já está instalado
     if [ -f "$DB_DIR/$pkg.ver" ]; then
         echo "⚠️  $pkg já está instalado (versão $(cat $DB_DIR/$pkg.ver))."
         return
     fi
 
-    build_and_install "$pkg" "$SRC_URL" "$SRC_DIRNAME" "$VERSION" "${DEPENDS[@]}"
+    build_and_install "$pkg" "$SRC_URL" "$SRC_DIRNAME" "$VERSION" "$SHA256" "${DEPENDS[@]}"
 }
 
 build_and_install() {
@@ -48,13 +64,18 @@ build_and_install() {
     url=$2
     srcdir=$3
     ver=$4
-    shift 4
+    hash=$5
+    shift 5
     deps=("$@")
 
     echo "📦 Compilando e instalando $pkg $ver..."
 
     cd "$SRC_DIR"
     wget -q "$url" -O "$pkg.tar.gz"
+
+    # Checa integridade
+    check_integrity "$pkg.tar.gz" "$hash"
+
     tar xf "$pkg.tar.gz"
     cd "$SRC_DIR/$srcdir"
 
@@ -116,10 +137,9 @@ upgrade_pkg() {
     fi
 
     echo "⬆️ Atualizando $pkg de $current para $VERSION..."
-
     rm -f "$DB_DIR/$pkg.files" "$DB_DIR/$pkg.ver"
 
-    build_and_install "$pkg" "$SRC_URL" "$SRC_DIRNAME" "$VERSION" "${DEPENDS[@]}"
+    build_and_install "$pkg" "$SRC_URL" "$SRC_DIRNAME" "$VERSION" "$SHA256" "${DEPENDS[@]}"
 }
 
 list_pkgs() {
