@@ -32,13 +32,23 @@ install_pkg() {
         return
     fi
 
-    echo "📦 Instalando $pkg..."
+    build_and_install "$pkg" "$SRC_URL" "$SRC_DIRNAME" "$VERSION" "${DEPENDS[@]}"
+}
 
-    # Baixa e compila
+build_and_install() {
+    pkg=$1
+    url=$2
+    srcdir=$3
+    ver=$4
+    shift 4
+    deps=("$@")
+
+    echo "📦 Compilando e instalando $pkg $ver..."
+
     cd "$SRC_DIR"
-    wget -q "$SRC_URL" -O "$pkg.tar.gz"
+    wget -q "$url" -O "$pkg.tar.gz"
     tar xf "$pkg.tar.gz"
-    cd "$SRC_DIR/$SRC_DIRNAME"
+    cd "$SRC_DIR/$srcdir"
 
     make clean >/dev/null 2>&1
     ./configure --prefix=/usr
@@ -51,10 +61,10 @@ install_pkg() {
 
     # Registra arquivos e dependências
     find "$BUILD_DIR/$pkg" -type f | sed "s|$BUILD_DIR/$pkg||" > "$DB_DIR/$pkg.files"
-    echo "$VERSION" > "$DB_DIR/$pkg.ver"
-    echo "${DEPENDS[@]}" > "$DB_DIR/$pkg.deps"
+    echo "$ver" > "$DB_DIR/$pkg.ver"
+    echo "${deps[@]}" > "$DB_DIR/$pkg.deps"
 
-    echo "✅ $pkg $VERSION instalado com sucesso!"
+    echo "✅ $pkg $ver instalado com sucesso!"
 }
 
 remove_pkg() {
@@ -88,6 +98,36 @@ remove_pkg() {
     echo "✅ $pkg removido com sucesso!"
 }
 
+upgrade_pkg() {
+    pkg=$1
+    recipe="$PKG_DIR/$pkg.sh"
+
+    if [ ! -f "$recipe" ]; then
+        echo "❌ Receita $pkg não encontrada!"
+        exit 1
+    fi
+
+    if [ ! -f "$DB_DIR/$pkg.ver" ]; then
+        echo "⚠️ $pkg não está instalado. Use 'install'."
+        exit 1
+    fi
+
+    source "$recipe"
+    current=$(cat "$DB_DIR/$pkg.ver")
+
+    if [ "$VERSION" = "$current" ]; then
+        echo "✅ $pkg já está na versão $VERSION"
+        return
+    fi
+
+    echo "⬆️ Atualizando $pkg de $current para $VERSION..."
+
+    # Remove registros antigos mas mantém dependências
+    rm -f "$DB_DIR/$pkg.files" "$DB_DIR/$pkg.ver"
+
+    build_and_install "$pkg" "$SRC_URL" "$SRC_DIRNAME" "$VERSION" "${DEPENDS[@]}"
+}
+
 list_pkgs() {
     echo "📋 Pacotes instalados:"
     for f in "$DB_DIR"/*.ver; do
@@ -112,7 +152,8 @@ info_pkg() {
 case "$1" in
     install) install_pkg "$2" ;;
     remove)  remove_pkg "$2" ;;
+    upgrade) upgrade_pkg "$2" ;;
     list)    list_pkgs ;;
     info)    info_pkg "$2" ;;
-    *) echo "Uso: $0 {install|remove|list|info} pacote" ;;
+    *) echo "Uso: $0 {install|remove|upgrade|list|info} pacote" ;;
 esac
