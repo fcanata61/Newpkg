@@ -1,4 +1,5 @@
-# Receita do pacote bash
-SRC_URL="https://ftp.gnu.org/gnu/bash/bash-5.2.tar.gz"
-SRC_DIRNAME="bash-5.2"
-VERSION="5.2"
+# Receita do pacote vim
+SRC_URL="https://github.com/vim/vim/archive/refs/tags/v9.1.0000.tar.gz"
+SRC_DIRNAME="vim-9.1.0000+
+VERSION="9.1"
+DEPENDS=("ncurses")
